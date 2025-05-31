@@ -8,17 +8,17 @@
 
 namespace accessor {
 
-// 工具：判断Accessor类型
-// 判断类型是否为Accessor<T, Mode>
+// Utility: Determine Accessor type
+// Check if the type is an Accessor<T, Mode>
 template <typename T>
 struct is_accessor : std::false_type {};
 
 template <template <typename, auto> class Acc, typename DS, auto Mode>
 struct is_accessor<Acc<DS, Mode>> : std::true_type {};
 
-// 工具：获取Accessor的数据指针
-// 这里只做演示，假设Accessor有data_ref成员
-// 实际项目可用friend或接口暴露
+// Utility: Get data pointer from Accessor
+// This is just a demonstration, assuming Accessor has a data_ref member
+// In actual projects, use friend or expose interfaces
 
 template <typename Acc>
 auto* get_data_ptr(Acc& acc) {
@@ -29,8 +29,8 @@ auto* get_data_ptr(Acc& acc) {
     }
 }
 
-// 工具：获取Accessor的访问模式
-// 通过decltype(acc)::Mode
+// Utility: Get access mode from Accessor
+// Via decltype(acc)::Mode
 
 template <typename Acc>
 constexpr auto get_access_mode(const Acc&) {
@@ -181,4 +181,4 @@ void custom_parallel_for(std::size_t n, KernelFunc&& kernel, Acc1& x_acc, Acc2& 
     }
 }
 
-} // namespace accessor 
+} // namespace accessor
