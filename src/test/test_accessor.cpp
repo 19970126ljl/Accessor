@@ -2,6 +2,7 @@
 #include <accessor/traits/dense_array_traits.hpp>
 #include <cassert>
 #include <iostream>
+#include <accessor/core/custom_parallel_for.hpp>
 
 using namespace accessor;
 
@@ -41,7 +42,31 @@ void test_dense_array_accessor() {
     std::cout << "All basic accessor tests passed!" << std::endl;
 }
 
+void test_saxpy_auto_buffer() {
+    // Y = a * X + Y
+    const size_t N = 10;
+    float a = 2.0f;
+    DenseArray1D<float> X(N), Y(N);
+    for (size_t i = 0; i < N; ++i) {
+        X[i] = float(i);
+        Y[i] = 100.0f + i;
+    }
+    Accessor<DenseArray1D<float>, AccessMode::Read> x_acc(X);
+    Accessor<DenseArray1D<float>, AccessMode::ReadWrite> y_acc(Y);
+    accessor::custom_parallel_for(N,
+        [&](size_t i, const auto& x, const auto& y_in, auto& y_out) {
+            y_out.set_value_by_id(i, a * x.get_value_by_id(i) + y_in.get_value_by_id(i));
+        },
+        x_acc, y_acc, y_acc);
+    // 检查结果
+    for (size_t i = 0; i < N; ++i) {
+        assert(Y[i] == a * float(i) + 100.0f + i);
+    }
+    std::cout << "SAXPY auto-buffer test passed!" << std::endl;
+}
+
 int main() {
     test_dense_array_accessor();
+    test_saxpy_auto_buffer();
     return 0;
 } 

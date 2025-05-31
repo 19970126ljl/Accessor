@@ -17,6 +17,8 @@ public:
     using ItemIDType = typename TraitsType::ItemIDType;
     using ValueType = typename TraitsType::ValueType;
 
+    static constexpr AccessMode mode_value = Mode;
+
     /// @brief Constructor
     /// @param ds Reference to the data structure instance
     explicit Accessor(DS_Type& ds) : data_ref(ds) {}
@@ -55,7 +57,6 @@ public:
             std::forward<ViewArgs>(args)...);
     }
 
-private:
     DS_Type& data_ref;
 };
 

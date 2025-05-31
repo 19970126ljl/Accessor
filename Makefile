@@ -1,4 +1,4 @@
-CXX = clang++
+CXX = nvc++
 CXXFLAGS = -std=c++20 -Wall -Wextra -I./include
 LDFLAGS =
 

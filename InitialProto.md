@@ -55,11 +55,11 @@
         * 在循环内部：
             * `ItemIDType item_id = iter_space[i];`
             * 调用 `kernel(item_id, accessors...);`
-    * **“读旧写新”的初步考虑 (针对SAXPY中的Y)：**
+    * **"读旧写新"的初步考虑 (针对SAXPY中的Y)：**
         * SAXPY (`Y = a*X + Y`) 中，`Y`既被读取也被写入。如果并行执行，需要确保 `Y[i]` 的读取发生在所有 `Y` 的写入之前（对于本次迭代的输入而言），或者 `Y` 的写入不会干扰其他线程对 `Y` 的读取（对于其他 `Y[j]`）。
         * **简化处理：**
             * **方案1 (显式双缓冲，由用户或测试代码管理)：** 用户传入一个`Y_in` (Read) 和一个`Y_out` (Write)。`custom_parallel_for`不特别处理，依赖用户在lambda中正确使用。这是最简单的起点。
-            * **方案2 (运行时初步尝试缓冲，更接近我们的目标)：** 如果`custom_parallel_for`检测到同一个`DenseArray1D`同时被一个`Read`模式的Accessor和一个`Write`模式的Accessor访问（或者一个`ReadWrite`模式的Accessor），它可以为“写”操作启用一个临时缓冲区。
+            * **方案2 (运行时初步尝试缓冲，更接近我们的目标)：** 如果`custom_parallel_for`检测到同一个`DenseArray1D`同时被一个`Read`模式的Accessor和一个`Write`模式的Accessor访问（或者一个`ReadWrite`模式的Accessor），它可以为"写"操作启用一个临时缓冲区。
                 * `X` -> `Accessor<DenseArray1D<float>, AccessMode::Read> x_acc(X_data);`
                 * `Y` -> `Accessor<DenseArray1D<float>, AccessMode::ReadWrite> y_acc(Y_data);` (或者一个读Y，一个写Y_temp)
                 * 在`custom_parallel_for`开始时，如果`y_acc`是`ReadWrite`，运行时可能会为`Y_data`创建一个内部的只读快照供读取，写入则写入`Y_data`的一个临时版本或主版本（取决于具体策略，需要细化）。
@@ -88,3 +88,16 @@
 
 **任务焦点：**
 这个初始任务的重点是把Accessor和Traits的C++模板机制跑通，并与一个简单的主机端并行循环结合起来，验证接口的可用性和基本逻辑。我们先不追求极致的性能或复杂的GPU特性。
+
+**接口修正说明（当前实现）**：
+* custom_parallel_for 目前仅支持：
+  * 2参数模式：custom_parallel_for(N, kernel, x_acc, y_acc)
+  * 3参数模式：custom_parallel_for(N, kernel, x_acc, y_in_acc, y_out_acc)
+    * 当 y_in_acc 和 y_out_acc 指向同一数据时，自动分配缓冲，循环后写回。
+* 示例：
+  ```cpp
+  custom_parallel_for(N, [&](size_t i, const auto& x, const auto& y_in, auto& y_out) {
+      y_out.set_value_by_id(i, a * x.get_value_by_id(i) + y_in.get_value_by_id(i));
+  }, x_acc, y_acc, y_acc);
+  ```
+* 暂不支持任意参数泛型和复杂冲突自动推断。
