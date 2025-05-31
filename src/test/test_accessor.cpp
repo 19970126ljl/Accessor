@@ -58,7 +58,7 @@ void test_saxpy_auto_buffer() {
             y_out.set_value_by_id(i, a * x.get_value_by_id(i) + y_in.get_value_by_id(i));
         },
         x_acc, y_acc, y_acc);
-    // 检查结果
+    // Check results
     for (size_t i = 0; i < N; ++i) {
         assert(Y[i] == a * float(i) + 100.0f + i);
     }
@@ -69,4 +69,4 @@ int main() {
     test_dense_array_accessor();
     test_saxpy_auto_buffer();
     return 0;
-} 
+}

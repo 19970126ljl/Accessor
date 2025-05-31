@@ -2,6 +2,7 @@
 
 #include <type_traits>
 #include <cstddef>
+#include <vector>
 
 namespace accessor {
 
@@ -64,6 +65,19 @@ struct DataStructureTraits {
         static_assert(sizeof(DS_Type) == 0, 
             "DataStructureTraits must be specialized for this type");
         __builtin_unreachable();
+    }
+};
+
+// std::vector<T> 特化
+template <typename T>
+struct DataStructureTraits<std::vector<T>> {
+    using ItemIDType = size_t;
+    using ValueType = T;
+    static T get_value_by_id_impl(const std::vector<T>& vec, size_t id) {
+        return vec[id];
+    }
+    static void set_value_by_id_impl(std::vector<T>& vec, size_t id, T val) {
+        vec[id] = val;
     }
 };
 
