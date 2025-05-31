@@ -12,7 +12,7 @@
 
 ```cpp
 template<typename IterSpaceType, typename KernelFunc, typename... AccessorTypes>
-void custom_parallel_for(IterSpaceType iter_space, KernelFunc&& kernel, AccessorTypes&... accessors);
+void custom_parallel_for(IterSpaceType iter_space, KernelFunc&& kernel, AccessorTypes&... accessors) noexcept;
 ```
 
 #### 参数说明
@@ -45,9 +45,14 @@ void custom_parallel_for(IterSpaceType iter_space, KernelFunc&& kernel, Accessor
 
 #### 并行执行与线程安全
 
-- 内部采用OpenMP并行for。
-- 每个线程持有自己的Accessor tuple副本，避免并发写缓冲区的竞态。
-- 写回阶段在并行区外串行执行，保证最终结果一致。
+- 内部采用OpenMP并行for，支持动态调度和嵌套并行
+- 每个线程持有独立的Accessor tuple副本，避免竞态条件
+- 新增：
+  - CSR矩阵特化优化，支持稀疏数据结构的高效并行
+  - 增强的数据结构traits系统，支持更灵活的类型检测
+  - 改进的缓冲区管理策略，减少内存开销
+- 写回阶段在并行区外串行执行，保证最终结果一致性
+- 异常安全：所有操作标记为noexcept，错误通过返回值处理
 
 ---
 
@@ -95,6 +100,31 @@ custom_parallel_for(SimpleRange{N},
         (void)r.get_value_by_id(i);
     },
     read_acc, write_acc1, write_acc2);
+```
+
+#### 3. SpMV with CSR Matrix
+
+```cpp
+CSRMatrix<float> A(N, N);
+DenseArray1D<float> x(N), y(N);
+
+Accessor<CSRMatrix<float>, AccessMode::Read> A_acc(A);
+Accessor<DenseArray1D<float>, AccessMode::Read> x_acc(x);
+Accessor<DenseArray1D<float>, AccessMode::Write> y_acc(y);
+
+custom_parallel_for(CSRRows{A},
+    [&](size_t row_idx,
+        const auto& A_accessor,
+        const auto& x_accessor,
+        auto& y_accessor) {
+        float sum = 0.0f;
+        auto row = A_accessor.get_row(row_idx);
+        for (auto& elem : row) {
+            sum += elem.value * x_accessor.get_value_by_id(elem.col_idx);
+        }
+        y_accessor.set_value_by_id(row_idx, sum);
+    },
+    A_acc, x_acc, y_acc);
 ```
 
 ---
@@ -158,11 +188,17 @@ custom_parallel_for(SimpleRange{N},
   A: 当前推荐仅在一维/扁平并行场景下使用自动缓冲。嵌套并行for的自动缓冲需进一步设计。
 
 - **Q: 支持哪些数据结构？**  
-  A: 只要实现了相应的DataStructureTraits和Accessor模板，即可支持任意数据结构。
+  A: 只要实现了相应的DataStructureTraits和Accessor模板，即可支持任意数据结构，包括新增的CSR矩阵支持。
 
 - **Q: 如何自定义迭代空间？**  
-  A: 实现`size()`和`operator[]`即可。
+  A: 实现`size()`和`operator[]`即可。新增CSRRows迭代空间专门用于稀疏矩阵行迭代。
+
+- **Q: 如何处理多个Accessor指向同一数据？**  
+  A: 框架会自动检测冲突并为写操作创建缓冲区，保证"读旧写新"语义。
+
+- **Q: 性能开销如何？**  
+  A: 最新优化减少了内存开销，特别针对稀疏数据结构进行了特化优化。
 
 ---
 
-如需更详细的API说明、进阶用法或英文版文档，请随时告知！ 
+如需更详细的API说明、进阶用法或英文版文档，请随时告知！

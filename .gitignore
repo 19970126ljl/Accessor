@@ -1,1 +1,7 @@
 build/
+nohup.out
+sequentialthinking-mcp-server/
+.vscode/
+*.log
+*.tmp
+*.swp
