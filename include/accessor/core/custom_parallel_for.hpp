@@ -118,32 +118,27 @@ BufferRequirement detect_buffer_requirements(const std::tuple<AccessorTypes&...>
     return req;
 }
 
-// Helper function to build the tuple of accessors for the kernel
-// It creates new accessor objects: some point to temporary buffers, others to original data.
+namespace detail {
+
+// Helper function to build the tuple of accessors for the kernel (moved into detail)
 template<typename OriginalTuple, typename BufferRequirementType, typename TempDataStorageType, std::size_t... Is>
 auto create_kernel_arg_accessors_tuple_impl(
-    OriginalTuple& original_accessor_tuple, // tuple of original AccessorTypes&...
-    BufferRequirementType& buffer_req,      // constains write_accessor_indices
-    TempDataStorageType& temp_data_storage, // std::vector<std::any> storing actual buffer data
+    OriginalTuple& original_accessor_tuple,
+    BufferRequirementType& buffer_req,
+    TempDataStorageType& temp_data_storage,
     std::index_sequence<Is...> /*seq*/
 ) {
-    // This lambda is called for each original accessor to decide what kind of new accessor to create.
-    auto construct_kernel_accessor = 
-        [&original_accessor_tuple, &buffer_req, &temp_data_storage] // Capture necessary variables
-        (auto accessor_compile_time_idx_wrapper) { // Takes a wrapper like std::integral_constant
-
-        // Extract the compile-time index from the wrapper
+    auto construct_kernel_accessor =
+        [&original_accessor_tuple, &buffer_req, &temp_data_storage]
+        (auto accessor_compile_time_idx_wrapper) {
         constexpr size_t accessor_compile_time_idx = decltype(accessor_compile_time_idx_wrapper)::value;
-
-        // Get a reference to the original accessor at this compile-time index
         auto& original_acc_ref = std::get<accessor_compile_time_idx>(original_accessor_tuple);
         using OriginalAccType = std::remove_reference_t<decltype(original_acc_ref)>;
         using DS_Type = std::remove_reference_t<decltype(original_acc_ref.data_ref)>;
         constexpr AccessMode mode = OriginalAccType::mode_value;
 
-        // Check if this specific accessor (by its original_accessor_tuple index) needs buffering.
         bool needs_buffering_for_this_one = false;
-        size_t buffer_storage_vector_idx = 0; 
+        size_t buffer_storage_vector_idx = 0;
         size_t count_write_accessors_processed = 0;
         for(size_t write_idx_from_req : buffer_req.write_accessor_indices) {
             if (accessor_compile_time_idx == write_idx_from_req) {
@@ -155,127 +150,127 @@ auto create_kernel_arg_accessors_tuple_impl(
         }
 
         if (needs_buffering_for_this_one) {
-            // This accessor needs buffering.
-            // temp_data_storage should already be populated with its buffer data.
-            // The accessor created here will refer to data inside an std::any object.
-            // This requires std::any_cast<DS_Type&> to get the reference.
-            // The lifetime of temp_data_storage is managed by the caller (custom_parallel_for).
             return Accessor<DS_Type, mode>(std::any_cast<DS_Type&>(temp_data_storage[buffer_storage_vector_idx]));
         } else {
-            // This accessor does not need buffering.
-            // Create a new accessor that refers to the original data.
             return Accessor<DS_Type, mode>(original_acc_ref.data_ref);
         }
     };
-
-    // Create a tuple by calling construct_kernel_accessor for each index Is...
-    // Each call to construct_kernel_accessor(std::integral_constant<size_t, Is>{}) will return an Accessor object.
     return std::make_tuple(construct_kernel_accessor(std::integral_constant<size_t, Is>{})...);
 }
 
-// New variadic template version
-template<typename IterSpaceType, typename KernelFunc, typename... AccessorTypes>
-void custom_parallel_for(IterSpaceType iter_space, KernelFunc&& kernel, AccessorTypes&... accessors) {
-    auto original_accessor_tuple = std::forward_as_tuple(accessors...);
-    BufferRequirement buffer_req = detect_buffer_requirements(original_accessor_tuple);
 
-    std::vector<std::any> temp_data_buffers_storage; // Stores the actual data for buffers
-
-    if (buffer_req.needs_buffering) {
-        // 1. Populate temp_data_buffers_storage with copies of data for write accessors
-        auto populate_buffers_if_needed = [&](auto& acc_ref, size_t current_idx) {
-            for (size_t write_idx : buffer_req.write_accessor_indices) {
-                if (current_idx == write_idx) {
-                    using DS_Type = std::remove_reference_t<decltype(acc_ref.data_ref)>;
-                    temp_data_buffers_storage.emplace_back(DS_Type(acc_ref.data_ref)); // Copy and store
-                    break; 
-                }
-            }
-            return 0; // Dummy return for fold expression
-        };
-        
-        // Use a fold expression to populate buffers for all accessors that need it
-        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            (populate_buffers_if_needed(std::get<Is>(original_accessor_tuple), Is), ...);
-        }(std::index_sequence_for<AccessorTypes...>{});
-
-        // 2. Create the tuple of accessors for the kernel (some pointing to buffers)
-        auto kernel_args_tuple = create_kernel_arg_accessors_tuple_impl(
-            original_accessor_tuple,
-            buffer_req,
-            temp_data_buffers_storage,
-            std::index_sequence_for<AccessorTypes...>{}
-        );
-        
-        // 3. Execute kernel with thread-local copies of the accessor tuple
-        #pragma omp parallel
-        {
-            // Each thread gets its own copy of the accessor tuple
-            auto thread_local_kernel_args = kernel_args_tuple;
-            
-            #pragma omp for
-            for (size_t i = 0; i < iter_space.size(); ++i) {
-                auto item_id = iter_space[i];
-                std::apply(
-                    [&](auto&... unpacked_kernel_accessors) {
-                        kernel(item_id, unpacked_kernel_accessors...);
-                    },
-                    thread_local_kernel_args
-                );
-            }
-        }
-
-        // 4. Write back data from temp_data_buffers_storage to original accessors
-        size_t buffer_idx_in_storage = 0;
-        auto write_back_if_needed = [&](auto& original_acc_ref, size_t current_idx) {
-            for (size_t write_idx_from_req : buffer_req.write_accessor_indices) {
-                if (current_idx == write_idx_from_req) {
-                    // Get reference to the buffered data
-                    using DS_Type = std::remove_reference_t<decltype(original_acc_ref.data_ref)>;
-                    auto& buffer_data = std::any_cast<DS_Type&>(temp_data_buffers_storage[buffer_idx_in_storage]);
-                    
-                    // For DenseArray1D, use element-wise copy to ensure correctness
-                    if constexpr (requires { original_acc_ref.data_ref.data; }) {
-                        // Ensure target array size is sufficient
-                        if (original_acc_ref.data_ref.data.size() < buffer_data.data.size()) {
-                            original_acc_ref.data_ref.data.resize(buffer_data.data.size());
-                        }
-                        
-                        // Copy elements one by one
-                        for (size_t i = 0; i < buffer_data.data.size(); ++i) {
-                            original_acc_ref.data_ref.data[i] = buffer_data.data[i];
-                        }
-                        
-                        // Update count as well
-                        original_acc_ref.data_ref.count = buffer_data.count;
-                    } else {
-                        // For other types, fall back to whole object assignment
-                        original_acc_ref.data_ref = buffer_data;
-                    }
-                    
-                    buffer_idx_in_storage++;
-                    break;
-                }
-            }
-            return 0; // Dummy return for fold expression
-        };
-        
-        // Use a fold expression for write-back
-        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            (write_back_if_needed(std::get<Is>(original_accessor_tuple), Is), ...);
-        }(std::index_sequence_for<AccessorTypes...>{});
-
-    } else { // No buffering needed - direct parallel execution
-        #pragma omp parallel for
+template<typename IterSpaceType, typename KernelFunc, typename AccessorTupleType>
+void execute_parallel_kernel_directly(
+    IterSpaceType iter_space,
+    KernelFunc&& kernel,
+    AccessorTupleType& original_accessor_tuple)
+{
+    #pragma omp parallel
+    {
+        #pragma omp for
         for (size_t i = 0; i < iter_space.size(); ++i) {
             auto item_id = iter_space[i];
             std::apply(
-                [&](auto&... unpacked_accessors) {
-                    kernel(item_id, unpacked_accessors...);
+                [&kernel, item_id_val = item_id](auto&... unpacked_accessors) {
+                    kernel(item_id_val, unpacked_accessors...);
                 },
-                original_accessor_tuple 
+                original_accessor_tuple
             );
         }
+    }
+}
+
+// Note: Passing Indices directly now to avoid deducing ...AccessorTypes inside.
+template<typename IterSpaceType, typename KernelFunc, typename AccessorTupleType, typename BufferRequirementType, size_t... Indices>
+void execute_parallel_kernel_with_buffering(
+    IterSpaceType iter_space,
+    KernelFunc&& kernel,
+    AccessorTupleType& original_accessor_tuple,
+    const BufferRequirementType& buffer_req,
+    std::index_sequence<Indices...> /* idx_seq */
+    )
+{
+    std::vector<std::any> temp_data_buffers_storage;
+
+    // 1. Populate temp_data_buffers_storage
+    auto populate_buffers_if_needed = [&](auto& acc_ref, size_t current_idx) {
+        for (size_t write_idx : buffer_req.write_accessor_indices) {
+            if (current_idx == write_idx) {
+                using DS_Type = std::remove_reference_t<decltype(acc_ref.data_ref)>;
+                temp_data_buffers_storage.emplace_back(DS_Type(acc_ref.data_ref)); // Copy and store
+                break;
+            }
+        }
+        return 0; // Dummy return for fold expression
+    };
+    // Use a fold expression to populate buffers
+    (populate_buffers_if_needed(std::get<Indices>(original_accessor_tuple), Indices), ...);
+
+    // 2. Create the tuple of accessors for the kernel
+    auto kernel_args_tuple = detail::create_kernel_arg_accessors_tuple_impl(
+        original_accessor_tuple,
+        buffer_req,
+        temp_data_buffers_storage,
+        std::index_sequence<Indices...>{} // Pass the sequence
+    );
+
+    // 3. Execute kernel
+    #pragma omp parallel
+    {
+        auto thread_local_kernel_args = kernel_args_tuple;
+        #pragma omp for
+        for (size_t i = 0; i < iter_space.size(); ++i) {
+            auto item_id = iter_space[i];
+            std::apply(
+                [&kernel, item_id_val = item_id](auto&... unpacked_kernel_accessors) {
+                    kernel(item_id_val, unpacked_kernel_accessors...);
+                },
+                thread_local_kernel_args
+            );
+        }
+    }
+
+    // 4. Write back data
+    size_t buffer_idx_in_storage = 0;
+    auto write_back_if_needed = [&](auto& original_acc_ref, size_t current_idx) {
+        for (size_t write_idx_from_req : buffer_req.write_accessor_indices) {
+            if (current_idx == write_idx_from_req) {
+                using DS_Type = std::remove_reference_t<decltype(original_acc_ref.data_ref)>;
+                auto& buffer_data = std::any_cast<DS_Type&>(temp_data_buffers_storage[buffer_idx_in_storage]);
+                DataStructureTraits<DS_Type>::copy_data_structure_impl(original_acc_ref.data_ref, buffer_data);
+                buffer_idx_in_storage++;
+                break;
+            }
+        }
+        return 0; // Dummy return for fold expression
+    };
+    // Use a fold expression for write-back
+    (write_back_if_needed(std::get<Indices>(original_accessor_tuple), Indices), ...);
+}
+
+} // namespace detail
+
+// Main custom_parallel_for function
+template<typename IterSpaceType, typename KernelFunc, typename... AccessorTypes>
+void custom_parallel_for(IterSpaceType iter_space, KernelFunc&& kernel, AccessorTypes&... accessors) {
+    auto original_accessor_tuple = std::forward_as_tuple(accessors...);
+    // It's important that detect_buffer_requirements is defined before this point or in a visible scope.
+    BufferRequirement buffer_req = detect_buffer_requirements(original_accessor_tuple);
+
+    if (buffer_req.needs_buffering) {
+        detail::execute_parallel_kernel_with_buffering(
+            iter_space,
+            std::forward<KernelFunc>(kernel),
+            original_accessor_tuple,
+            buffer_req,
+            std::index_sequence_for<AccessorTypes...>{} // Pass the sequence of indices
+        );
+    } else {
+        detail::execute_parallel_kernel_directly(
+           iter_space,
+           std::forward<KernelFunc>(kernel),
+           original_accessor_tuple
+        );
     }
 }
 

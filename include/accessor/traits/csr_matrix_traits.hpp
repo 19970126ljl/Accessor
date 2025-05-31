@@ -3,6 +3,7 @@
 #include <accessor/core/csr_matrix.hpp>
 #include <cstddef>
 #include <type_traits>
+#include <iostream>
 
 namespace accessor {
 
@@ -55,6 +56,17 @@ struct DataStructureTraits<CSRMatrix> {
             mat.col_indices.data() + start,
             end - start
         };
+    }
+
+    // Implementation of copy_data_structure_impl for CSRMatrix (deep copy)
+    static void copy_data_structure_impl(CSRMatrix& dest, const CSRMatrix& src) {
+        if (&dest == &src) {
+            return; // Handle self-assignment
+        }
+
+        dest.values = src.values;
+        dest.col_indices = src.col_indices;
+        dest.row_ptr = src.row_ptr;
     }
 }; 
 

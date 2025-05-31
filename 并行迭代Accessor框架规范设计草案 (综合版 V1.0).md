@@ -236,60 +236,60 @@ concept IterationSpace = requires(const T space, size_t global_idx) {
 [主机端 (Host Side)]                                   [编译时/策略定义 (Compile-Time / Policy Definition)]
 =====================================================    =======================================================
 1. 用户代码 (Application Code)
-   |
-   v
+   |  
+   v  
 2. 数据结构实例 (e.g., CSRMatrix, DenseVector)
-   |
+   |  
    +----> 3. Accessor<DS_Type, Mode> 创建
    |           (e.g., Accessor<CSRMatrix, ReadMode> matAcc(csr_mat))
-   |           |
-   |           | (Accessor 内部使用)
-   |           v
+   |           |  
+   |           | (Accessor 内部使用)  
+   |           v  
    |       4. DataStructureTraits<DS_Type> (特化) <-----------------------+
    |           |   - ItemIDType, ValueType, ViewResultType, etc.          | (提供实现)
    |           |   - get_view_impl<ViewTag>(...), get_value_by_id(...)    |
    |           |   - apply_reduction(..., ReduceImplKind)                 |
    |           |   - supports_view<ViewTag>                               |
-   |           |                                                          |
+   |           |                                                          |  
    |           +----------------------------------------------------------+
-   |           | (查询策略)
-   |           v
+   |           | (查询策略)  
+   |           v  
    |       5. ReduceSemanticsPolicy<DS_Type, ValType, Op> (特化)
    |           |   - impl_kind (DeviceAtomic / LocalBufferAndFinalReduce)
-   |           v
+   |           v  
    +----> 6. IterateOver::* (e.g., IterateOver::Rows)
                |   - size(), operator[], to_device_pod()
                |   - (满足 IterationSpace concept)
-               v
+               v  
 7. custom_parallel_for(iter_space, acc1, acc2,..., user_lambda)
-   |
-   | (运行时分析AccessModes, ReduceSemanticsPolicy, "读旧写新"决策)
+   |  
+   | (运行时分析AccessModes, ReduceSemanticsPolicy, "读旧写新"决策)  
    | (调用 iter_space.to_device_pod(), 为Accessor准备DeviceAccessorPod)
-   | (准备 KernelContext)
-   |
-   v
+   | (准备 KernelContext)  
+   |  
+   v  
 [GPU内核启动 (GPU Kernel Launch)]
 =====================================================
-   |
-   v
+   |  
+   v  
 8. gpu_kernel_wrapper(KernelContext ctx) __global__
-   |
-   | (在设备端)
-   v
+   |  
+   | (在设备端)  
+   v  
 9. Device-Side Logic:
    |  - global_thread_idx = ...
    |  - if (global_thread_idx < ctx.iter_space_dev_repr.device_size())
-   |    |
+   |    |  
    |    +--> item_id = ctx.iter_space_dev_repr.device_get_item_id(global_thread_idx)
-   |    |
+   |    |  
    |    +--> DeviceAccessor 重建 (from DeviceAccessorPod in ctx)
    |    |      (e.g., DeviceCSRMatrixAccessor mat_dev_acc(ctx.mat_pod))
-   |    |      |
+   |    |      |  
    |    |      | (DeviceAccessor 内部可能仍通过 __device__ 版 Traits 方法访问数据)
-   |    |      v
+   |    |      v  
    |    +--> DeviceLambdaWrapper (or similar) 执行用户逻辑
    |           (user_lambda(item_id, mat_dev_acc, x_dev_acc, y_dev_acc))
-   |             |
+   |             |  
    |             +--> 调用 mat_dev_acc.get_view(item_id, GetCSRRowViewTag{})
    |             +--> 调用 x_dev_acc.get_value_by_id(col_id)
    |             +--> 调用 y_dev_acc.set_value_by_id(row_id, sum) / reduce_value_by_id(...)

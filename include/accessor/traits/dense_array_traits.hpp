@@ -55,6 +55,24 @@ struct DataStructureTraits<DenseArray1D<T>> {
     static void set_value_by_id_impl(DenseArray1D<T>& arr, ItemIDType id, ValueType val) {
         arr.data[id] = val;
     }
+
+    // Implementation of copy_data_structure_impl for DenseArray1D (deep copy)
+    static void copy_data_structure_impl(DenseArray1D<T>& dest, const DenseArray1D<T>& src) {
+        if (&dest == &src) return; // Handle self-assignment
+
+        // Resize destination if needed
+        if (dest.data.size() != src.data.size()) {
+            dest.data.resize(src.data.size());
+        }
+
+        // Copy elements
+        for (size_t i = 0; i < src.data.size(); ++i) {
+            dest.data[i] = src.data[i];
+        }
+
+        // Update count
+        dest.count = src.count;
+    }
 };
 
 } // namespace accessor 

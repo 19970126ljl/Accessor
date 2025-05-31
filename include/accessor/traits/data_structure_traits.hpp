@@ -66,6 +66,13 @@ struct DataStructureTraits {
             "DataStructureTraits must be specialized for this type");
         __builtin_unreachable();
     }
+
+    // New: Static member function for deep copying data structures
+    // Default implementation uses copy assignment, which might be shallow for some types.
+    // Specializations should provide deep copy if needed.
+    static void copy_data_structure_impl(DS_Type& dest, const DS_Type& src) {
+        dest = src; // Default: uses copy assignment operator
+    }
 };
 
 // std::vector<T> 特化
@@ -78,6 +85,11 @@ struct DataStructureTraits<std::vector<T>> {
     }
     static void set_value_by_id_impl(std::vector<T>& vec, size_t id, T val) {
         vec[id] = val;
+    }
+
+    // Implementation of copy_data_structure_impl for std::vector (uses std::vector's deep copy assignment)
+    static void copy_data_structure_impl(std::vector<T>& dest, const std::vector<T>& src) {
+        dest = src; // std::vector's assignment operator performs a deep copy
     }
 };
 
