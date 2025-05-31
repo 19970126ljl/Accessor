@@ -27,16 +27,19 @@ void test_spmv() {
     Accessor<std::vector<float>, AccessMode::Write> y_acc(y);
 
     accessor::custom_parallel_for(
-        IterateOver::CSRRows(mat).size(),
-        [&](size_t row_idx, const auto& mat_acc, const auto& x_acc, auto& y_acc) {
-            auto row_view = mat_acc.get_view(row_idx, GetCSRRowViewTag{});
+        IterateOver::CSRRows(mat),
+        [&](size_t row_idx, 
+            const Accessor<CSRMatrix, AccessMode::Read>& matrix_accessor, 
+            const Accessor<std::vector<float>, AccessMode::Read>& x_accessor, 
+            Accessor<std::vector<float>, AccessMode::Write>& y_accessor) {
+            auto row_view = matrix_accessor.get_view(row_idx, GetCSRRowViewTag{});
             float sum = 0.0f;
             for (size_t i = 0; i < row_view.num_non_zeros; ++i) {
                 size_t col = row_view.col_indices_ptr[i];
                 float val = row_view.values_ptr[i];
-                sum += val * x_acc.get_value_by_id(col);
+                sum += val * x_accessor.get_value_by_id(col);
             }
-            y_acc.set_value_by_id(row_idx, sum);
+            y_accessor.set_value_by_id(row_idx, sum);
         },
         mat_acc, x_acc, y_acc
     );
